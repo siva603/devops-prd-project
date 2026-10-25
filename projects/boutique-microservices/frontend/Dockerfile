@@ -11,8 +11,26 @@ ENV TSC_COMPILE_ON_ERROR=true
 ENV NODE_OPTIONS="--max-old-space-size=2048"
 
 COPY package*.json ./
+
+# Pin schema-utils 3.1.1, ajv 6.12.6, and ajv-keywords 3.5.2
+# schema-utils v3 does not use ajv-formats, eliminating the 'ajv/dist/compile/codegen' error completely
+RUN node -e " \
+  const fs = require('fs'); \
+  const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); \
+  if (pkg.dependencies) { \
+    delete pkg.dependencies['ajv']; \
+    delete pkg.dependencies['ajv-keywords']; \
+    delete pkg.dependencies['schema-utils']; \
+  } \
+  pkg.overrides = Object.assign({}, pkg.overrides, { \
+    'schema-utils': '3.1.1', \
+    'ajv': '6.12.6', \
+    'ajv-keywords': '3.5.2' \
+  }); \
+  fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2)); \
+"
+
 RUN npm install --legacy-peer-deps
-RUN npm install ajv@6.12.6 ajv-keywords@3.5.2 --legacy-peer-deps
 
 COPY . .
 RUN npm run build
