@@ -8,14 +8,12 @@ terraform {
     }
   }
 
-  # Enterprise Standard: Remote State Storage with S3 and DynamoDB State Locking
-  # Real IT companies never store terraform.tfstate locally.
+  # Remote State Storage in Amazon S3 (100% S3 Only - Free Tier Friendly)
   # Pass bucket dynamically: terraform init -backend-config="bucket=boutique-terraform-state-<ACCOUNT_ID>"
   backend "s3" {
-    key            = "boutique/infrastructure/terraform.tfstate"
-    region         = "us-east-1"
-    dynamodb_table = "boutique-terraform-locks"
-    encrypt        = true
+    key     = "boutique/infrastructure/terraform.tfstate"
+    region  = "us-east-1"
+    encrypt = true
   }
 }
 

@@ -28,7 +28,7 @@
    - [Enterprise IAM Governance: DevOpsEngineers & CICDAutomation Groups](#enterprise-iam-governance-devopsengineers--cicdautomation-groups)
    - [Why Repository Names Must Start with the Project Prefix (`boutique-*`)](#why-repository-names-must-start-with-the-project-prefix-boutique-)
    - [Terraform Infrastructure Provisioning: Complete Pre-Flight & Execution](#terraform-infrastructure-provisioning-complete-pre-flight--execution)
-   - [Storing Infrastructure State Remotely (Enterprise S3 + DynamoDB Locking)](#storing-infrastructure-state-remotely-enterprise-s3--dynamodb-locking)
+   - [Storing Infrastructure State Remotely (Amazon S3 Backend - Free Tier Standard)](#storing-infrastructure-state-remotely-amazon-s3-backend---free-tier-standard)
    - [Post-Provisioning Verification Commands](#post-provisioning-verification-commands)
    - [Deep-Dive Technical Breakdown: Understanding the Core Cluster Commands](#deep-dive-technical-breakdown-understanding-the-core-cluster-commands)
 5. [Phase 4: Kubernetes Deployment, GitOps (ArgoCD) & Single EBS Storage](#5-phase-4-kubernetes-deployment-gitops-argocd--single-ebs-storage)
@@ -1227,41 +1227,38 @@ aws configure get region
 
 ---
 
-### Storing Infrastructure State Remotely (Enterprise S3 + DynamoDB Locking)
+### Storing Infrastructure State Remotely (Amazon S3 Backend - Free Tier Standard)
 
-In real IT companies, storing `terraform.tfstate` on a local laptop or EC2 disk is strictly prohibited. If two engineers run `terraform apply` simultaneously, state is corrupted. If an EC2 instance is terminated, infrastructure management is lost forever.
+In real IT companies, storing `terraform.tfstate` on a local laptop or EC2 disk is strictly prohibited. If an EC2 instance is terminated or a disk fails, all infrastructure tracking is lost forever.
 
-Real companies store state in **Amazon S3** with **DynamoDB State Locking**.
+By storing the state file in **Amazon S3**:
+1. **Durability & Safety**: Your infrastructure state is safely backed up in S3 (99.999999999% durability).
+2. **Version History**: With S3 Bucket Versioning enabled, every `terraform apply` creates a new version. You can roll back if a bad apply ever damages the state.
+3. **100% Free Tier ($0.00)**: S3 offers 5 GB of standard storage in the AWS Free Tier, and a state file is typically only 50 KB–200 KB.
+4. **Why Not DynamoDB?**: DynamoDB is only used in large corporate teams for distributed concurrency locks (preventing two engineers from running `terraform apply` at the exact same second). For solo DevOps engineers, staging environments, and Free Tier setups, **S3 alone is 100% sufficient and stores all state data without any DynamoDB table needed**.
 
-#### Step 1: Bootstrap the Remote State S3 Bucket and DynamoDB Table
+#### Step 1: Bootstrap the Remote State S3 Bucket (S3 Only)
 
-**Linux:**
+**Linux (Ubuntu EC2 / Amazon Linux):**
 ```bash
 # 1. Fetch your AWS Account ID dynamically
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 REGION="us-east-1"
 BUCKET_NAME="boutique-terraform-state-${ACCOUNT_ID}"
-TABLE_NAME="boutique-terraform-locks"
 
 echo "Creating S3 State Bucket: $BUCKET_NAME in $REGION..."
 aws s3api create-bucket --bucket "$BUCKET_NAME" --region "$REGION"
 
-# Enable S3 Bucket Versioning (Preserves state history and rollback)
+# Enable S3 Bucket Versioning (Preserves state history and rollback capability)
 aws s3api put-bucket-versioning --bucket "$BUCKET_NAME" --versioning-configuration Status=Enabled
 
-# Enable S3 Server-Side Encryption (AES256)
+# Enable S3 Server-Side Encryption (AES256) at $0 cost
 aws s3api put-bucket-encryption --bucket "$BUCKET_NAME" --server-side-encryption-configuration '{
   "Rules": [{ "ApplyServerSideEncryptionByDefault": { "SSEAlgorithm": "AES256" } }]
 }'
 
-# 2. Create DynamoDB Table for Distributed State Locking
-echo "Creating DynamoDB Lock Table: $TABLE_NAME..."
-aws dynamodb create-table \
-    --table-name "$TABLE_NAME" \
-    --attribute-definitions AttributeName=LockID,AttributeType=S \
-    --key-schema AttributeName=LockID,KeyType=HASH \
-    --billing-mode PAY_PER_REQUEST \
-    --region "$REGION"
+# Verify bucket exists and is ready
+aws s3 ls "s3://${BUCKET_NAME}"
 ```
 
 **Windows (PowerShell):**
@@ -1269,11 +1266,11 @@ aws dynamodb create-table \
 $ACCOUNT_ID = (aws sts get-caller-identity --query Account --output text)
 $REGION = "us-east-1"
 $BUCKET_NAME = "boutique-terraform-state-$ACCOUNT_ID"
-$TABLE_NAME = "boutique-terraform-locks"
 
 aws s3api create-bucket --bucket $BUCKET_NAME --region $REGION
 aws s3api put-bucket-versioning --bucket $BUCKET_NAME --versioning-configuration Status=Enabled
-aws dynamodb create-table --table-name $TABLE_NAME --attribute-definitions AttributeName=LockID,AttributeType=S --key-schema AttributeName=LockID,KeyType=HASH --billing-mode PAY_PER_REQUEST --region $REGION
+aws s3api put-bucket-encryption --bucket $BUCKET_NAME --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+aws s3 ls "s3://$BUCKET_NAME"
 ```
 
 ---
