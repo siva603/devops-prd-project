@@ -3,8 +3,15 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Prevent React Scripts from failing on warnings or running out of memory during Webpack compilation
+ENV CI=false
+ENV GENERATE_SOURCEMAP=false
+ENV DISABLE_ESLINT_PLUGIN=true
+ENV NODE_OPTIONS="--max-old-space-size=2048"
+
 COPY package*.json ./
 RUN npm install --legacy-peer-deps
+RUN npm install ajv@^8.12.0 ajv-keywords@^5.1.0 --legacy-peer-deps
 
 COPY . .
 RUN npm run build

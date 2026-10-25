@@ -323,6 +323,19 @@ sudo usermod -aG docker $USER && newgrp docker
 # 5. Install Node.js 20 LTS
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
+
+# 6. CRITICAL FOR EC2 (t2.micro / t3.micro / t3.small): Enable 4GB Swap Memory
+# AWS EC2 instances come with 0MB swap by default. React Webpack build requires ~1.5GB RAM.
+# Without swap, the Linux kernel OOM-killer abruptly terminates Docker with "exit status 1"!
+if [ $(free -m | awk '/^Swap:/ {print $2}') -eq 0 ]; then
+    echo "Configuring 4GB Swap Space for EC2..."
+    sudo fallocate -l 4G /swapfile
+    sudo chmod 600 /swapfile
+    sudo mkswap /swapfile
+    sudo swapon /swapfile
+    echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+    echo "Swap configured successfully:" && free -h
+fi
 ```
 
 **Windows (PowerShell):**
@@ -526,15 +539,134 @@ git push -u origin main
 
 ---
 
-### GitHub Repository Secrets Setup
+### Detailed AWS Credentials & GitHub Secrets Configuration
 
-Navigate to: **GitHub Repo → Settings → Secrets and variables → Actions → New repository secret**
+Before your GitHub Actions pipeline can authenticate to Amazon ECR, you must retrieve your 12-digit **AWS Account ID**, verify your target **AWS Region**, generate programmatic access keys for **`github-actions-ci`** inside AWS IAM, and store them securely in GitHub Secrets.
 
-Add these 4 secrets:
-1. `AWS_ACCESS_KEY_ID`: Programmatic IAM Access Key ID for user `github-actions-ci`.
-2. `AWS_SECRET_ACCESS_KEY`: Programmatic IAM Secret Access Key.
-3. `AWS_REGION`: `us-east-1`
-4. `AWS_ACCOUNT_ID`: Your 12-digit AWS Account ID (find via `aws sts get-caller-identity --query Account --output text`).
+---
+
+#### 1. How to Find Your 12-Digit AWS Account ID
+
+##### Method A: Via AWS Management Console (GUI)
+1. In the top-right corner of the AWS Management Console navigation bar, click on your **account name / username dropdown** (located next to the region selector).
+2. The dropdown menu opens showing:
+   * **Account ID**: `1234-5678-9012`
+3. Click the **copy icon** next to the 12-digit number (it copies to your clipboard as a 12-digit string without hyphens: `123456789012`).
+
+##### Method B: Via Terminal / CLI (Linux on EC2 & Windows)
+```bash
+aws sts get-caller-identity --query Account --output text
+```
+* **Expected Output**: `123456789012`
+
+---
+
+#### 2. How to Find Your Target AWS Region
+
+##### Method A: Via AWS Management Console (GUI)
+1. Look at the top-right navigation bar of the AWS Console, directly between the global search bar and your account name.
+2. It displays a geographic region name (e.g. **N. Virginia**, **Ohio**, **Oregon**).
+3. Click the dropdown to view the list of regions with their exact **API Region Code**:
+   * `US East (N. Virginia)` $\rightarrow$ **`us-east-1`** (Standard region used for this project)
+   * `US East (Ohio)` $\rightarrow$ **`us-east-2`**
+   * `US West (Oregon)` $\rightarrow$ **`us-west-2`**
+   * `Europe (Ireland)` $\rightarrow$ **`eu-west-1`**
+   * `Asia Pacific (Mumbai)` $\rightarrow$ **`ap-south-1`**
+4. Always copy the lowercase hyphenated code: **`us-east-1`**.
+
+##### Method B: Via Terminal / CLI
+```bash
+aws configure get region
+```
+* If you are running directly on an EC2 instance, you can query instance metadata:
+  ```bash
+  curl -s http://169.254.169.254/latest/meta-data/placement/region
+  ```
+
+---
+
+#### 3. Step-by-Step Inside AWS Console: Creating the Access Key for `github-actions-ci`
+
+Follow every setting, radio button, and checkbox below to generate your keys cleanly:
+
+1. **Navigate to IAM**:
+   * In the AWS Console search bar at the very top, type `IAM` and press Enter.
+   * In the left-hand navigation menu, click **Users**.
+2. **Select the User**:
+   * In the user list, click directly on the blue username **`github-actions-ci`**.
+3. **Open Security Credentials**:
+   * On the user overview page, click the **Security credentials** tab (located next to "Permissions").
+4. **Initiate Key Creation**:
+   * Scroll down to the **Access keys** section.
+   * Click the button labeled **Create access key** on the right side.
+5. **Step 1: Access key best practices & alternatives**:
+   * AWS presents use case options with radio buttons:
+     * [ ] *Command Line Interface (CLI)*
+     * [ ] *Local code*
+     * [ ] *Application running on an AWS compute service*
+     * [x] **Application running outside AWS** $\leftarrow$ **SELECT THIS OPTION** (GitHub Actions is an external automation platform).
+     * [ ] *Other*
+   * Scroll to the bottom of the page and check the confirmation box:
+     * [x] **"I understand the above recommendation and want to proceed to create an access key."**
+   * Click the orange **Next** button.
+6. **Step 2: Set description tag (Optional)**:
+   * In the **Description tag value** text box, enter:  
+     `GitHub Actions CI/CD Pipeline for Boutique Microservices`
+   * Click the orange **Create access key** button.
+7. **Step 3: Retrieve and Save Credentials**:
+   * You will now see two crucial values displayed on screen:
+     * **Access key**: A 20-character uppercase alphanumeric string starting with `AKIA...` (e.g. `AKIAIOSFODNN7EXAMPLE`).
+     * **Secret access key**: A 40-character secret string. Click **Show** or the copy icon next to it (e.g. `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY`).
+   * **Download the CSV backup**: Click the button **Download .csv file**. Save this file (`github-actions-ci_accessKeys.csv`) securely on your local computer.
+   * Click **Done**.
+   > [!WARNING]
+   > AWS will **never show the Secret Access Key again** after you leave this page. If you lose it, you must delete the key and generate a new one.
+
+---
+
+#### 4. Step-by-Step: Adding Secrets into GitHub Repository
+
+1. Open your web browser and go to your repository on GitHub:  
+   `https://github.com/<YOUR_GITHUB_USERNAME>/devops-ai-playbook`
+2. Click the **Settings** tab (the gear icon on the far right of the repository navigation bar).
+3. In the left-hand menu, scroll down to the **Security** category:
+   * Click **Secrets and variables** $\rightarrow$ Click **Actions**.
+4. You will see the **Repository secrets** section. Click the green button: **New repository secret**.
+5. Add each of the 4 secrets one by one:
+
+##### Secret 1: `AWS_ACCESS_KEY_ID`
+* **Name**: `AWS_ACCESS_KEY_ID`
+* **Secret**: Paste the 20-character key from AWS starting with `AKIA...`
+* Click **Add secret**.
+
+##### Secret 2: `AWS_SECRET_ACCESS_KEY`
+* Click **New repository secret**
+* **Name**: `AWS_SECRET_ACCESS_KEY`
+* **Secret**: Paste the 40-character secret string from AWS
+* Click **Add secret**.
+
+##### Secret 3: `AWS_REGION`
+* Click **New repository secret**
+* **Name**: `AWS_REGION`
+* **Secret**: `us-east-1` (or your chosen region code in lowercase)
+* Click **Add secret**.
+
+##### Secret 4: `AWS_ACCOUNT_ID`
+* Click **New repository secret**
+* **Name**: `AWS_ACCOUNT_ID`
+* **Secret**: Paste your 12-digit account number (e.g. `123456789012` with no hyphens or spaces)
+* Click **Add secret**.
+
+##### Verification in GitHub:
+Once completed, your GitHub Secrets page will display:
+```text
+Repository secrets
+AWS_ACCESS_KEY_ID        Updated just now
+AWS_ACCOUNT_ID           Updated just now
+AWS_REGION               Updated just now
+AWS_SECRET_ACCESS_KEY    Updated just now
+```
+> **Checkpoint**: All 4 secrets are now securely encrypted in GitHub. `.github/workflows/ci.yml` will automatically consume these secrets during subsequent commits.
 
 ---
 
