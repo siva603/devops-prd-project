@@ -33,11 +33,6 @@
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
-  "overrides": {
-    "schema-utils": "3.1.1",
-    "ajv": "6.12.6",
-    "ajv-keywords": "3.5.2"
-  },
   "engines": {
     "node": ">=20.0.0"
   },
@@ -58,5 +53,8 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "devDependencies": {
+    "ajv": "^8.12.0"
   }
 }
