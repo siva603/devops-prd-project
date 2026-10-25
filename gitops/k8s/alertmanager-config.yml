@@ -1,0 +1,40 @@
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: boutique-alertmanager-config
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  route:
+    groupBy: ['alertname', 'namespace', 'job']
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 3h
+    receiver: 'DevOps-Email-And-Slack'
+    routes:
+      - matchers:
+          - name: severity
+            value: critical
+        receiver: 'Critical-OnCall-Email'
+  receivers:
+    - name: 'DevOps-Email-And-Slack'
+      emailConfigs:
+        - to: 'alerts@yourcompany.com'
+          from: 'alertmanager@yourcompany.com'
+          smarthost: 'email-smtp.us-east-1.amazonaws.com:587'
+          authUsername: 'AKIAEXAMPLESMTPUSER'
+          authPassword:
+            name: alertmanager-smtp-secret
+            key: password
+          sendResolved: true
+    - name: 'Critical-OnCall-Email'
+      emailConfigs:
+        - to: 'sre-oncall@yourcompany.com'
+          from: 'alertmanager-urgent@yourcompany.com'
+          smarthost: 'email-smtp.us-east-1.amazonaws.com:587'
+          authUsername: 'AKIAEXAMPLESMTPUSER'
+          authPassword:
+            name: alertmanager-smtp-secret
+            key: password
+          sendResolved: true

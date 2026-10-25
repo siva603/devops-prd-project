@@ -1,0 +1,66 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: boutique-alert-rules
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+    role: alert-rules
+spec:
+  groups:
+    - name: boutique-infrastructure-alerts
+      rules:
+        # Alert 1: Disk Space Running Low on Single EBS Volume (Before data is lost!)
+        - alert: DatabaseStorageFillingUp
+          expr: (node_filesystem_avail_bytes{mountpoint="/var/lib/postgresql/data"} / node_filesystem_size_bytes{mountpoint="/var/lib/postgresql/data"}) * 100 < 15
+          for: 2m
+          labels:
+            severity: critical
+            team: sre-oncall
+          annotations:
+            summary: "PostgreSQL EBS volume free space is below 15%!"
+            description: "Database storage on pod {{ $labels.pod }} has less than 15% capacity remaining. Immediate cleanup or volume expansion required before corruption occurs."
+
+        # Alert 2: High HTTP 5xx Error Rate across Microservices
+        - alert: MicroserviceHigh5xxRate
+          expr: sum by (job) (rate(http_requests_total{status_code=~"5.."}[2m])) / sum by (job) (rate(http_requests_total[2m])) * 100 > 5
+          for: 1m
+          labels:
+            severity: warning
+            team: backend-devs
+          annotations:
+            summary: "Service {{ $labels.job }} 5xx error rate exceeded 5%"
+            description: "High error rate detected on {{ $labels.job }}. Check gateway logs and downstream services."
+
+        # Alert 3: Pod CrashLooping in Boutique Namespace
+        - alert: PodCrashLooping
+          expr: rate(kube_pod_container_status_restarts_total{namespace="boutique"}[5m]) * 60 > 2
+          for: 1m
+          labels:
+            severity: critical
+            team: sre-oncall
+          annotations:
+            summary: "Pod {{ $labels.pod }} is crashlooping"
+            description: "Pod {{ $labels.pod }} in namespace boutique has restarted multiple times in the last 5 minutes."
+
+        # Alert 4: Database Connection Saturation
+        - alert: PostgresConnectionSaturation
+          expr: pg_stat_activity_count > 80
+          for: 2m
+          labels:
+            severity: warning
+            team: dba-team
+          annotations:
+            summary: "PostgreSQL active connections > 80"
+            description: "Database connection pool is near max capacity."
+
+        # Alert 5: Critical Database Table Missing or Corrupted (Products/Auth Catalog Dropped)
+        - alert: DatabaseTableMissingOrUnhealthy
+          expr: (sum by (job) (rate(http_requests_total{status_code="500", route=~".*products.*|.*auth.*"}[1m])) > 0)
+          for: 30s
+          labels:
+            severity: critical
+            team: sre-oncall
+          annotations:
+            summary: "CRITICAL: Database table missing or query failure detected in {{ $labels.job }}"
+            description: "Table 'products' or core relational tables in database are missing or returning 500 errors. Immediate automated or manual restore required."
