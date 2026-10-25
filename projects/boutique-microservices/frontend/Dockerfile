@@ -7,11 +7,12 @@ WORKDIR /app
 ENV CI=false
 ENV GENERATE_SOURCEMAP=false
 ENV DISABLE_ESLINT_PLUGIN=true
+ENV TSC_COMPILE_ON_ERROR=true
 ENV NODE_OPTIONS="--max-old-space-size=2048"
 
 COPY package*.json ./
 RUN npm install --legacy-peer-deps
-RUN npm install ajv@^8.12.0 ajv-keywords@^5.1.0 --legacy-peer-deps
+RUN npm install ajv@6.12.6 ajv-keywords@3.5.2 --legacy-peer-deps
 
 COPY . .
 RUN npm run build
