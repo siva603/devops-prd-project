@@ -1094,33 +1094,95 @@ Now that users, groups, and policies are active, here is how each one is used in
 
 When you log into your EC2 Linux instance or local workstation to deploy infrastructure:
 
-1. **Configure Your AWS CLI**:
+1. **Install the AWS CLI v2**:
+   ```bash
+   # Update packages and install prerequisites
+   sudo apt update && sudo apt install -y curl unzip
+
+   # Download official AWS CLI v2 installer (for x86_64)
+   curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+
+   # Unzip and install
+   unzip -q awscliv2.zip
+   sudo ./aws/install --update
+
+   # Verify installation
+   aws --version
+   ```
+
+2. **Configure Your AWS CLI**:
    ```bash
    aws configure
-   # AWS Access Key ID: AKIAIOSFODNN7EXAMPLE (siva-devops access key)
-   # AWS Secret Access Key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+   # AWS Access Key ID: <Your siva-devops access key>
+   # AWS Secret Access Key: <Your siva-devops secret key>
    # Default region name: us-east-1
    # Default output format: json
    ```
 
-2. **Verify That You Are Acting as `siva-devops`**:
+3. **Verify That You Are Acting as `siva-devops`**:
    ```bash
+   # Check identity and account ID
    aws sts get-caller-identity
-   ```
-   * Output will show: `"Arn": "arn:aws:iam::123456789012:user/siva-devops"`
 
-3. **Deploy the Infrastructure via Terraform**:
-   Because `siva-devops` belongs to `DevOpsEngineers`, they have permission to create the VPC, subnets, EKS cluster, and `boutique-*` ECR repositories:
+   # Check configured region
+   aws configure get region
+   ```
+   * Output will show:
+   ```json
+   {
+       "UserId": "AIDA...",
+       "Account": "011951224967",
+       "Arn": "arn:aws:iam::011951224967:user/siva-devops"
+   }
+   ```
+
+4. **Verify / Attach Infrastructure Provisioning Permissions**:
+   Because `siva-devops` provisions the VPC, EKS Cluster, ECR repositories, and IAM roles, ensure `siva-devops` has `AdministratorAccess` attached (or the complete provisioning policy covering `iam:CreateServiceLinkedRole`, `ecr:*`, `iam:CreateRole`, `eks:*`, and `s3:*`):
    ```bash
-   cd projects/Infrastructure
-   terraform init -backend-config="bucket=boutique-terraform-state-$(aws sts get-caller-identity --query Account --output text)"
-   terraform apply tfplan
+   # Attach AdministratorAccess to siva-devops (Guarantees zero permission errors during Terraform)
+   aws iam attach-user-policy --user-name siva-devops --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
    ```
 
-4. **Connect kubectl to the EKS Cluster**:
+5. **Bootstrap the Remote State S3 Bucket (Bucket Name: `boutique-terraform-state-011951224967`)**:
+   ```bash
+   ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+   REGION="us-east-1"
+   BUCKET_NAME="boutique-terraform-state-${ACCOUNT_ID}"
+
+   echo "Creating S3 State Bucket: $BUCKET_NAME in $REGION..."
+   aws s3api create-bucket --bucket "$BUCKET_NAME" --region "$REGION"
+
+   # Enable S3 Bucket Versioning (Preserves state history and enables rollback)
+   aws s3api put-bucket-versioning --bucket "$BUCKET_NAME" --versioning-configuration Status=Enabled
+
+   # Enable S3 Server-Side Encryption (AES256) at $0 cost
+   aws s3api put-bucket-encryption --bucket "$BUCKET_NAME" --server-side-encryption-configuration '{
+     "Rules": [{ "ApplyServerSideEncryptionByDefault": { "SSEAlgorithm": "AES256" } }]
+   }'
+
+   # Verify bucket is ready
+   aws s3 ls "s3://${BUCKET_NAME}"
+   ```
+
+6. **Deploy the Infrastructure via Terraform**:
+   ```bash
+   cd ~/devops-prd-project/projects/Infrastructure
+
+   # 1. Initialize Terraform with the S3 Remote Backend
+   ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+   terraform init -backend-config="bucket=boutique-terraform-state-${ACCOUNT_ID}"
+
+   # 2. Plan and inspect the 32 resources
+   terraform plan -out=tfplan
+
+   # 3. Apply the infrastructure
+   terraform apply -auto-approve
+   ```
+
+7. **Connect kubectl to the EKS Cluster & Verify**:
    ```bash
    aws eks update-kubeconfig --region us-east-1 --name eks-cluster
-   kubectl get nodes
+   kubectl get nodes -o wide
    ```
 
 ---
